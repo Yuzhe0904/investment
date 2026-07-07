@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>投资工作台</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <aside class="sidebar" aria-label="工具导航">
+        <div class="brand">
+          <div class="brand-mark">投</div>
+          <div>
+            <h1>投资工作台</h1>
+            <p>本地股票分析工具</p>
+          </div>
+        </div>
+
+        <nav class="nav-list" aria-label="主要视图">
+          <button class="nav-item active" type="button" data-view="dashboard">总览</button>
+          <button class="nav-item" type="button" data-view="watchlist">观察</button>
+          <button class="nav-item" type="button" data-view="portfolio">持仓</button>
+        </nav>
+
+        <section class="sidebar-panel">
+          <span class="panel-label">组合纪律</span>
+          <label class="field compact">
+            <span>单股上限</span>
+            <input id="maxWeight" type="number" min="1" max="100" step="1" value="25" />
+          </label>
+          <label class="field compact">
+            <span>安全边际</span>
+            <input id="marginSafety" type="number" min="0" max="80" step="1" value="20" />
+          </label>
+        </section>
+
+        <section class="sidebar-panel">
+          <span class="panel-label">数据源</span>
+          <label class="field compact">
+            <span>FMP API Key</span>
+            <input id="apiKeyInput" type="password" placeholder="本地保存，不提交到 GitHub" autocomplete="off" />
+          </label>
+          <div class="sidebar-actions">
+            <button id="saveApiKeyBtn" class="ghost-button" type="button">保存</button>
+            <button id="clearApiKeyBtn" class="danger-button" type="button">清除</button>
+          </div>
+        </section>
+      </aside>
+
+      <section class="workspace">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">FMP 实时数据 · 本地保存</p>
+            <h2 id="viewTitle">投资总览</h2>
+          </div>
+          <div class="topbar-actions">
+            <button id="openSearchBtn" class="ghost-button" type="button" title="搜索并添加股票">搜索股票</button>
+            <button id="refreshBtn" class="primary-button" type="button" title="从 FMP 刷新行情和财务数据">刷新数据</button>
+            <button id="exportBtn" class="ghost-button" type="button" title="导出数据">导出</button>
+            <button id="resetBtn" class="danger-button" type="button" title="清空示例和本地数据">清空</button>
+          </div>
+        </header>
+
+        <section class="status-strip" aria-live="polite">
+          <span id="dataStatus">准备连接 FMP。</span>
+          <span id="lastUpdated">尚未刷新</span>
+        </section>
+
+        <section class="metrics-grid" aria-label="关键指标">
+          <article class="metric-card">
+            <span>组合市值</span>
+            <strong id="portfolioValue">¥0</strong>
+          </article>
+          <article class="metric-card">
+            <span>预估盈亏</span>
+            <strong id="portfolioPnl">¥0</strong>
+          </article>
+          <article class="metric-card">
+            <span>观察股票</span>
+            <strong id="watchCount">0</strong>
+          </article>
+          <article class="metric-card">
+            <span>低估候选</span>
+            <strong id="undervaluedCount">0</strong>
+          </article>
+        </section>
+
+        <section class="content-grid">
+          <section id="searchPanel" class="tool-panel search-panel full-width" aria-label="搜索股票" hidden>
+            <div class="section-head">
+              <div>
+                <span class="panel-label">FMP 股票搜索</span>
+                <h3>搜索并加入股票池</h3>
+              </div>
+              <button id="closeSearchBtn" class="icon-button" type="button" title="关闭搜索">×</button>
+            </div>
+            <form id="symbolSearchForm" class="symbol-search-form">
+              <input id="symbolSearchInput" type="search" placeholder="输入代码或名称，例如 AAPL、Tesla、BABA" autocomplete="off" />
+              <button class="primary-button" type="submit">搜索</button>
+            </form>
+            <div id="searchResults" class="search-results" aria-live="polite"></div>
+          </section>
+
+          <section class="tool-panel analysis-panel" aria-label="股票池综合分析">
+            <div class="section-head">
+              <div>
+                <span class="panel-label">综合分析</span>
+                <h3>股票池诊断</h3>
+              </div>
+            </div>
+
+            <div class="analysis-grid">
+              <article class="analysis-tile">
+                <span>首选关注</span>
+                <strong id="bestCandidate">-</strong>
+              </article>
+              <article class="analysis-tile">
+                <span>平均目标空间</span>
+                <strong id="avgUpside">-</strong>
+              </article>
+              <article class="analysis-tile">
+                <span>高风险数量</span>
+                <strong id="highRiskCount">0</strong>
+              </article>
+              <article class="analysis-tile">
+                <span>最大仓位</span>
+                <strong id="topWeight">-</strong>
+              </article>
+            </div>
+
+            <div class="analysis-block">
+              <span class="panel-label">行动建议</span>
+              <p id="analysisSummary">刷新或添加股票后，这里会生成股票池分析。</p>
+            </div>
+
+            <div class="analysis-block">
+              <span class="panel-label">评分排序</span>
+              <div id="analysisList" class="analysis-list"></div>
+            </div>
+          </section>
+
+          <section class="tool-panel table-panel" aria-label="股票列表">
+            <div class="section-head">
+              <div>
+                <span class="panel-label">股票池</span>
+                <h3 id="tableTitle">全部股票</h3>
+              </div>
+              <div class="filter-row">
+                <input id="searchInput" type="search" placeholder="搜索代码或名称" aria-label="搜索股票" />
+                <select id="riskFilter" aria-label="筛选风险">
+                  <option value="all">全部风险</option>
+                  <option value="低">低风险</option>
+                  <option value="中">中风险</option>
+                  <option value="高">高风险</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>股票</th>
+                    <th>价格</th>
+                    <th>涨跌</th>
+                    <th>目标空间</th>
+                    <th>估值</th>
+                    <th>持仓</th>
+                    <th>风险</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="stockRows"></tbody>
+              </table>
+            </div>
+            <p id="emptyState" class="empty-state" hidden>还没有匹配的股票。</p>
+          </section>
+        </section>
+      </section>
+    </main>
+
+    <template id="rowTemplate">
+      <tr>
+        <td>
+          <strong class="stock-name"></strong>
+          <span class="stock-ticker"></span>
+          <p class="stock-thesis"></p>
+        </td>
+        <td class="price-cell"></td>
+        <td class="change-cell"></td>
+        <td>
+          <span class="upside-pill"></span>
+        </td>
+        <td class="valuation-cell"></td>
+        <td class="holding-cell"></td>
+        <td>
+          <span class="risk-pill"></span>
+        </td>
+        <td>
+          <div class="row-actions">
+            <button class="icon-button delete-row" type="button" title="删除">×</button>
+          </div>
+        </td>
+      </tr>
+    </template>
+
+    <template id="searchResultTemplate">
+      <article class="search-result">
+        <div>
+          <strong class="result-symbol"></strong>
+          <span class="result-name"></span>
+          <p class="result-meta"></p>
+        </div>
+        <button class="primary-button add-result" type="button">加入</button>
+      </article>
+    </template>
+
+    <script src="fmp-config.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
