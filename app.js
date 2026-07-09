@@ -319,8 +319,8 @@ function getUpside(stock) {
 
 function getRisk(stock) {
   const riskScore = getStockFactors(stock).riskScore;
-  if (riskScore >= 66) return "高";
-  if (riskScore >= 38) return "中";
+  if (riskScore >= 70) return "高";
+  if (riskScore >= 45) return "中";
   return "低";
 }
 
@@ -412,6 +412,13 @@ function averageScores(scores) {
   return clean.reduce((sum, score) => sum + score, 0) / clean.length;
 }
 
+function weightedAverageScores(items) {
+  const clean = items.filter((item) => item.score !== null && Number.isFinite(item.score) && item.weight > 0);
+  const totalWeight = clean.reduce((sum, item) => sum + item.weight, 0);
+  if (!clean.length || totalWeight <= 0) return null;
+  return clean.reduce((sum, item) => sum + item.score * item.weight, 0) / totalWeight;
+}
+
 function getStockFactors(stock, portfolioValue = 0) {
   const metrics = stock.metrics || {};
   const upside = getUpside(stock);
@@ -495,51 +502,49 @@ function getStockFactors(stock, portfolioValue = 0) {
     avgVolume ? scale(avgVolume, 500_000, 20_000_000) : volume ? scale(volume, 500_000, 20_000_000) : null,
   ]);
 
-  const confidenceSources = [
-    price,
-    pe,
-    revenueGrowth,
+  const factorAvailability = [
+    valuation,
+    growth,
     quality,
     financialHealth,
     momentum,
     analyst,
-    metrics.marketCap,
-    stock.target,
-  ].filter((value) => value !== null && value !== undefined && value !== 0).length;
-  const confidence = Math.round(clamp((confidenceSources / 9) * 100));
-  const baseScore = averageScores([
-    valuation === null ? null : valuation * 0.2,
-    growth === null ? null : growth * 0.18,
-    quality === null ? null : quality * 0.22,
-    financialHealth === null ? null : financialHealth * 0.14,
-    momentum === null ? null : momentum * 0.1,
-    analyst === null ? null : analyst * 0.1,
-    liquidity === null ? null : liquidity * 0.06,
+    liquidity,
+  ].filter((value) => value !== null && Number.isFinite(value)).length;
+  const confidence = Math.round(clamp((factorAvailability / 7) * 100));
+  const baseScore = weightedAverageScores([
+    { score: valuation, weight: 0.2 },
+    { score: growth, weight: 0.18 },
+    { score: quality, weight: 0.22 },
+    { score: financialHealth, weight: 0.14 },
+    { score: momentum, weight: 0.1 },
+    { score: analyst, weight: 0.1 },
+    { score: liquidity, weight: 0.06 },
   ]);
   const weightedScore = baseScore === null ? 50 : baseScore;
   const concentrationPenalty = weight > state.maxWeight ? (weight - state.maxWeight) * 1.3 : 0;
-  const dataPenalty = confidence < 45 ? 8 : confidence < 65 ? 4 : 0;
+  const dataPenalty = confidence < 45 ? 3 : 0;
   const score = Math.round(clamp(weightedScore - concentrationPenalty - dataPenalty));
 
   const riskDrivers = [];
-  let riskScore = 18;
-  if (valuation !== null && valuation < 35) {
-    riskScore += 18;
+  let riskScore = 12;
+  if (valuation !== null && valuation < 30) {
+    riskScore += 16;
     riskDrivers.push("估值偏贵");
   }
-  if (growth !== null && growth < 35) {
+  if (growth !== null && growth < 30) {
     riskScore += 14;
     riskDrivers.push("增长走弱");
   }
-  if (financialHealth !== null && financialHealth < 40) {
+  if (financialHealth !== null && financialHealth < 35) {
     riskScore += 18;
     riskDrivers.push("财务安全边际不足");
   }
-  if (quality !== null && quality < 35) {
-    riskScore += 12;
+  if (quality !== null && quality < 30) {
+    riskScore += 14;
     riskDrivers.push("盈利质量偏弱");
   }
-  if (momentum !== null && momentum < 30) {
+  if (momentum !== null && momentum < 25) {
     riskScore += 10;
     riskDrivers.push("价格趋势偏弱");
   }
@@ -548,7 +553,7 @@ function getStockFactors(stock, portfolioValue = 0) {
     riskDrivers.push("低于分析师目标空间");
   }
   if (beta !== null && beta > 1.5) {
-    riskScore += 8;
+    riskScore += 6;
     riskDrivers.push("波动率较高");
   }
   if (weight > state.maxWeight) {
@@ -556,9 +561,12 @@ function getStockFactors(stock, portfolioValue = 0) {
     riskDrivers.push("仓位集中");
   }
   if (confidence < 50) {
-    riskScore += 10;
+    riskScore += 6;
     riskDrivers.push("数据覆盖不足");
   }
+  if (growth !== null && growth >= 70) riskScore -= 8;
+  if (quality !== null && quality >= 70) riskScore -= 8;
+  if (financialHealth !== null && financialHealth >= 70) riskScore -= 6;
 
   return {
     score,
@@ -590,7 +598,7 @@ function getAnalysisItems() {
         stock,
         factors,
         upside: getUpside(stock),
-        risk: factors.riskScore >= 66 ? "高" : factors.riskScore >= 38 ? "中" : "低",
+        risk: factors.riskScore >= 70 ? "高" : factors.riskScore >= 45 ? "中" : "低",
         weight: portfolioValue > 0 ? (value / portfolioValue) * 100 : 0,
       };
     })
