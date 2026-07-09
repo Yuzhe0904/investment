@@ -20,6 +20,34 @@ const fallbackSearchUniverse = [
   ["TSM", "Taiwan Semiconductor Manufacturing Company Limited", "NYSE"],
   ["BABA", "Alibaba Group Holding Limited", "NYSE"],
 ].map(([symbol, name, exchange]) => ({ symbol, name, exchange, exchangeFullName: exchange, currency: "USD" }));
+const highGrowthUniverse = [
+  ["NVDA", "NVIDIA Corporation", "NASDAQ"],
+  ["ANET", "Arista Networks, Inc.", "NYSE"],
+  ["AVGO", "Broadcom Inc.", "NASDAQ"],
+  ["ASML", "ASML Holding N.V.", "NASDAQ"],
+  ["AMD", "Advanced Micro Devices, Inc.", "NASDAQ"],
+  ["MSFT", "Microsoft Corporation", "NASDAQ"],
+  ["META", "Meta Platforms, Inc.", "NASDAQ"],
+  ["GOOGL", "Alphabet Inc.", "NASDAQ"],
+  ["NFLX", "Netflix, Inc.", "NASDAQ"],
+  ["TSLA", "Tesla, Inc.", "NASDAQ"],
+  ["AMZN", "Amazon.com, Inc.", "NASDAQ"],
+  ["NOW", "ServiceNow, Inc.", "NYSE"],
+  ["CRWD", "CrowdStrike Holdings, Inc.", "NASDAQ"],
+  ["PLTR", "Palantir Technologies Inc.", "NASDAQ"],
+  ["APP", "AppLovin Corporation", "NASDAQ"],
+  ["SNOW", "Snowflake Inc.", "NYSE"],
+  ["DDOG", "Datadog, Inc.", "NASDAQ"],
+  ["NET", "Cloudflare, Inc.", "NYSE"],
+  ["PANW", "Palo Alto Networks, Inc.", "NASDAQ"],
+  ["SHOP", "Shopify Inc.", "NYSE"],
+  ["MELI", "MercadoLibre, Inc.", "NASDAQ"],
+  ["UBER", "Uber Technologies, Inc.", "NYSE"],
+  ["ARM", "Arm Holdings plc", "NASDAQ"],
+  ["SMCI", "Super Micro Computer, Inc.", "NASDAQ"],
+].map(([symbol, name, exchange]) => ({ symbol, name, exchange, exchangeFullName: exchange, currency: "USD" }));
+const growthScreenerMinGrowth = 80;
+const growthScreenerMaxGap = 15;
 
 const sampleStocks = [
   {
@@ -64,7 +92,9 @@ const state = {
   marginSafety: 20,
   isRefreshing: false,
   isSearching: false,
+  isScreeningGrowth: false,
   searchResults: [],
+  growthScreenerResults: [],
   statusMessage: "已连接 FMP 数据源。",
   settings: loadSettings(),
 };
@@ -93,6 +123,10 @@ const els = {
   symbolSearchInput: document.querySelector("#symbolSearchInput"),
   searchResults: document.querySelector("#searchResults"),
   searchResultTemplate: document.querySelector("#searchResultTemplate"),
+  runGrowthScreenerBtn: document.querySelector("#runGrowthScreenerBtn"),
+  growthScreenerStatus: document.querySelector("#growthScreenerStatus"),
+  growthScreenerCount: document.querySelector("#growthScreenerCount"),
+  growthScreenerResults: document.querySelector("#growthScreenerResults"),
   refreshBtn: document.querySelector("#refreshBtn"),
   exportBtn: document.querySelector("#exportBtn"),
   resetBtn: document.querySelector("#resetBtn"),
@@ -403,6 +437,65 @@ function renderSearchResults() {
     button.addEventListener("click", () => addSearchResult(result));
 
     els.searchResults.append(item);
+  });
+}
+
+function renderGrowthScreener() {
+  els.runGrowthScreenerBtn.disabled = state.isScreeningGrowth;
+  els.runGrowthScreenerBtn.textContent = state.isScreeningGrowth ? "筛选中..." : "运行筛选";
+  els.growthScreenerStatus.textContent = state.isScreeningGrowth
+    ? "正在读取候选股票数据并计算成长/综合评分。"
+    : `筛选条件：成长分 > ${growthScreenerMinGrowth}，且综合评分与成长分差距 <= ${growthScreenerMaxGap}。`;
+  els.growthScreenerCount.textContent = state.growthScreenerResults.length
+    ? `${state.growthScreenerResults.length} 个候选`
+    : "尚无结果";
+  els.growthScreenerResults.innerHTML = "";
+
+  if (state.isScreeningGrowth) {
+    els.growthScreenerResults.innerHTML = '<p class="empty-state">正在筛选候选股票。</p>';
+    return;
+  }
+
+  if (!state.growthScreenerResults.length) {
+    els.growthScreenerResults.innerHTML = '<p class="empty-state">运行后会显示符合条件的高成长公司。</p>';
+    return;
+  }
+
+  state.growthScreenerResults.forEach((item) => {
+    const card = document.createElement("article");
+    const details = document.createElement("div");
+    const title = document.createElement("strong");
+    const name = document.createElement("span");
+    const meta = document.createElement("p");
+    const scores = document.createElement("div");
+    const score = document.createElement("strong");
+    const button = document.createElement("button");
+    const alreadyAdded = state.stocks.some((stock) => normalizeSymbol(stock.ticker) === item.stock.fmpSymbol);
+
+    card.className = "screener-result";
+    scores.className = "screener-score";
+    button.className = alreadyAdded ? "ghost-button add-result added" : "primary-button add-result";
+    button.type = "button";
+    button.disabled = alreadyAdded;
+    button.textContent = alreadyAdded ? "已添加" : "加入";
+    button.addEventListener("click", () =>
+      addSearchResult({
+        symbol: item.stock.fmpSymbol || item.stock.ticker,
+        name: item.stock.name,
+        exchange: item.stock.exchange || "",
+        exchangeFullName: item.stock.exchange || "",
+        currency: item.stock.currency || "USD",
+      }),
+    );
+
+    title.textContent = item.stock.fmpSymbol || item.stock.ticker;
+    name.textContent = item.stock.name;
+    meta.textContent = `成长 ${item.factors.growth} · 综合 ${item.factors.score} · 差距 ${item.gap} · 质量 ${item.factors.quality} · 财务 ${item.factors.financialHealth}`;
+    score.textContent = item.factors.score;
+    scores.append(score, button);
+    details.append(title, name, meta);
+    card.append(details, scores);
+    els.growthScreenerResults.append(card);
   });
 }
 
@@ -741,6 +834,7 @@ function renderView() {
   renderAnalysis();
   renderRows();
   renderSearchResults();
+  renderGrowthScreener();
   renderApiKeyState();
   renderStatus(state.isRefreshing ? "正在从 FMP 获取真实行情和财务数据。" : state.statusMessage);
 }
@@ -992,33 +1086,37 @@ async function refreshOneStock(stock) {
   return result.source === "profile" ? applyProfile(stock, result.data) : applyQuote(stock, result.data);
 }
 
+async function enrichStockFundamentals(stock) {
+  const symbol = normalizeSymbol(stock.ticker);
+  const [profile, ratios, keyMetrics, scores, incomeGrowth, balanceGrowth, cashFlowGrowth, targets, estimates] =
+    await Promise.allSettled([
+      fetchJson("profile", { symbol }, { ttlMs: 24 * 60 * 60 * 1000 }),
+      fetchJson("ratios-ttm", { symbol }, { ttlMs: 24 * 60 * 60 * 1000 }),
+      fetchJson("key-metrics-ttm", { symbol }, { ttlMs: 24 * 60 * 60 * 1000 }),
+      fetchJson("financial-scores", { symbol }, { ttlMs: 24 * 60 * 60 * 1000 }),
+      fetchJson("income-statement-growth", { symbol, limit: 1 }, { ttlMs: 24 * 60 * 60 * 1000 }),
+      fetchJson("balance-sheet-statement-growth", { symbol, limit: 1 }, { ttlMs: 24 * 60 * 60 * 1000 }),
+      fetchJson("cash-flow-statement-growth", { symbol, limit: 1 }, { ttlMs: 24 * 60 * 60 * 1000 }),
+      fetchJson("price-target-consensus", { symbol }, { ttlMs: 6 * 60 * 60 * 1000 }),
+      fetchJson("analyst-estimates", { symbol, period: "annual", limit: 1 }, { ttlMs: 24 * 60 * 60 * 1000 }),
+    ]);
+
+  let nextStock = stock;
+  if (profile.status === "fulfilled") nextStock = applyProfile(nextStock, profile.value?.[0]);
+  if (ratios.status === "fulfilled") nextStock = applyRatios(nextStock, ratios.value?.[0]);
+  if (keyMetrics.status === "fulfilled") nextStock = applyKeyMetrics(nextStock, keyMetrics.value?.[0]);
+  if (scores.status === "fulfilled") nextStock = applyFinancialScores(nextStock, scores.value?.[0]);
+  if (incomeGrowth.status === "fulfilled") nextStock = applyGrowth(nextStock, incomeGrowth.value?.[0], "income");
+  if (balanceGrowth.status === "fulfilled") nextStock = applyGrowth(nextStock, balanceGrowth.value?.[0], "balance");
+  if (cashFlowGrowth.status === "fulfilled") nextStock = applyGrowth(nextStock, cashFlowGrowth.value?.[0], "cashflow");
+  if (targets.status === "fulfilled") nextStock = applyPriceTarget(nextStock, targets.value?.[0] || targets.value);
+  if (estimates.status === "fulfilled") nextStock = applyAnalystEstimates(nextStock, estimates.value?.[0]);
+  return nextStock;
+}
+
 async function refreshFundamentals() {
   const jobs = state.stocks.map(async (stock) => {
-    const symbol = normalizeSymbol(stock.ticker);
-    const [profile, ratios, keyMetrics, scores, incomeGrowth, balanceGrowth, cashFlowGrowth, targets, estimates] =
-      await Promise.allSettled([
-        fetchJson("profile", { symbol }, { ttlMs: 24 * 60 * 60 * 1000 }),
-        fetchJson("ratios-ttm", { symbol }, { ttlMs: 24 * 60 * 60 * 1000 }),
-        fetchJson("key-metrics-ttm", { symbol }, { ttlMs: 24 * 60 * 60 * 1000 }),
-        fetchJson("financial-scores", { symbol }, { ttlMs: 24 * 60 * 60 * 1000 }),
-        fetchJson("income-statement-growth", { symbol, limit: 1 }, { ttlMs: 24 * 60 * 60 * 1000 }),
-        fetchJson("balance-sheet-statement-growth", { symbol, limit: 1 }, { ttlMs: 24 * 60 * 60 * 1000 }),
-        fetchJson("cash-flow-statement-growth", { symbol, limit: 1 }, { ttlMs: 24 * 60 * 60 * 1000 }),
-        fetchJson("price-target-consensus", { symbol }, { ttlMs: 6 * 60 * 60 * 1000 }),
-        fetchJson("analyst-estimates", { symbol, period: "annual", limit: 1 }, { ttlMs: 24 * 60 * 60 * 1000 }),
-      ]);
-
-    let nextStock = stock;
-    if (profile.status === "fulfilled") nextStock = applyProfile(nextStock, profile.value?.[0]);
-    if (ratios.status === "fulfilled") nextStock = applyRatios(nextStock, ratios.value?.[0]);
-    if (keyMetrics.status === "fulfilled") nextStock = applyKeyMetrics(nextStock, keyMetrics.value?.[0]);
-    if (scores.status === "fulfilled") nextStock = applyFinancialScores(nextStock, scores.value?.[0]);
-    if (incomeGrowth.status === "fulfilled") nextStock = applyGrowth(nextStock, incomeGrowth.value?.[0], "income");
-    if (balanceGrowth.status === "fulfilled") nextStock = applyGrowth(nextStock, balanceGrowth.value?.[0], "balance");
-    if (cashFlowGrowth.status === "fulfilled") nextStock = applyGrowth(nextStock, cashFlowGrowth.value?.[0], "cashflow");
-    if (targets.status === "fulfilled") nextStock = applyPriceTarget(nextStock, targets.value?.[0] || targets.value);
-    if (estimates.status === "fulfilled") nextStock = applyAnalystEstimates(nextStock, estimates.value?.[0]);
-    return nextStock;
+    return enrichStockFundamentals(stock);
   });
 
   state.stocks = await Promise.all(jobs);
@@ -1062,6 +1160,48 @@ async function refreshFmpData() {
     state.statusMessage = `${error.message}，已保留本地数据。`;
   } finally {
     state.isRefreshing = false;
+    renderView();
+  }
+}
+
+async function runGrowthScreener() {
+  if (state.isScreeningGrowth) return;
+  if (!getApiKey()) {
+    state.statusMessage = "缺少 FMP API key，无法运行高成长筛选。";
+    renderView();
+    return;
+  }
+
+  state.isScreeningGrowth = true;
+  state.growthScreenerResults = [];
+  state.statusMessage = "正在运行美股高成长筛选。";
+  renderView();
+
+  const results = [];
+  try {
+    for (const candidate of highGrowthUniverse) {
+      let stock = stockFromSearchResult(candidate);
+      try {
+        stock = await refreshOneStock(stock);
+        stock = await enrichStockFundamentals(stock);
+        const factors = getStockFactors(stock);
+        const gap = Math.abs(factors.growth - factors.score);
+        if (factors.growth > growthScreenerMinGrowth && gap <= growthScreenerMaxGap) {
+          results.push({ stock, factors, gap: Math.round(gap) });
+        }
+      } catch (error) {
+        if (String(error.message).includes("请求额度已用完")) throw error;
+      }
+    }
+
+    state.growthScreenerResults = results.sort((a, b) => b.factors.score - a.factors.score);
+    state.statusMessage = state.growthScreenerResults.length
+      ? `筛选完成，找到 ${state.growthScreenerResults.length} 个高成长且综合分接近的候选。`
+      : "筛选完成，暂未找到符合条件的候选。";
+  } catch (error) {
+    state.statusMessage = `${error.message}，筛选已停止。`;
+  } finally {
+    state.isScreeningGrowth = false;
     renderView();
   }
 }
@@ -1141,6 +1281,8 @@ els.clearApiKeyBtn.addEventListener("click", () => {
   state.statusMessage = window.FMP_CONFIG?.apiKey ? "已清除浏览器保存的 key，改用本地配置。" : "已清除 FMP API key。";
   renderView();
 });
+
+els.runGrowthScreenerBtn.addEventListener("click", runGrowthScreener);
 
 els.openSearchBtn.addEventListener("click", () => {
   els.searchPanel.hidden = false;

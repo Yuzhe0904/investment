@@ -102,6 +102,21 @@
             <div id="searchResults" class="search-results" aria-live="polite"></div>
           </section>
 
+          <section class="tool-panel screener-panel full-width" aria-label="美股高成长筛选器">
+            <div class="section-head">
+              <div>
+                <span class="panel-label">智能筛选</span>
+                <h3>美股高成长筛选器</h3>
+              </div>
+              <button id="runGrowthScreenerBtn" class="primary-button" type="button">运行筛选</button>
+            </div>
+            <div class="screener-summary">
+              <span id="growthScreenerStatus">筛选条件：成长分 > 80，且综合评分与成长分差距 <= 15。</span>
+              <span id="growthScreenerCount">尚未运行</span>
+            </div>
+            <div id="growthScreenerResults" class="screener-results"></div>
+          </section>
+
           <section class="tool-panel analysis-panel" aria-label="股票池综合分析">
             <div class="section-head">
               <div>
