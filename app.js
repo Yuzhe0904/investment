@@ -93,6 +93,9 @@ const state = {
   isRefreshing: false,
   isSearching: false,
   isScreeningGrowth: false,
+  isDetailLoading: false,
+  selectedTicker: null,
+  detailMessage: "选择股票后会显示实时分析。",
   searchResults: [],
   growthScreenerResults: [],
   statusMessage: "已连接 FMP 数据源。",
@@ -138,6 +141,25 @@ const els = {
   topWeight: document.querySelector("#topWeight"),
   analysisSummary: document.querySelector("#analysisSummary"),
   analysisList: document.querySelector("#analysisList"),
+  stockDetailPanel: document.querySelector("#stockDetailPanel"),
+  detailTitle: document.querySelector("#detailTitle"),
+  detailMeta: document.querySelector("#detailMeta"),
+  detailStatus: document.querySelector("#detailStatus"),
+  detailPrice: document.querySelector("#detailPrice"),
+  detailChange: document.querySelector("#detailChange"),
+  detailUpside: document.querySelector("#detailUpside"),
+  detailTarget: document.querySelector("#detailTarget"),
+  detailRange: document.querySelector("#detailRange"),
+  detailRangeMeta: document.querySelector("#detailRangeMeta"),
+  detailVerdict: document.querySelector("#detailVerdict"),
+  detailConfidence: document.querySelector("#detailConfidence"),
+  detailFactors: document.querySelector("#detailFactors"),
+  detailMetrics: document.querySelector("#detailMetrics"),
+  detailPositives: document.querySelector("#detailPositives"),
+  detailRisks: document.querySelector("#detailRisks"),
+  detailAction: document.querySelector("#detailAction"),
+  refreshDetailBtn: document.querySelector("#refreshDetailBtn"),
+  closeDetailBtn: document.querySelector("#closeDetailBtn"),
 };
 
 function loadStocks() {
@@ -294,8 +316,10 @@ function fmpUrl(path, params = {}) {
 
 async function fetchJson(path, params, options = {}) {
   const ttlMs = options.ttlMs ?? 10 * 60 * 1000;
-  const cached = readApiCache(path, params, ttlMs);
-  if (cached) return cached;
+  if (!options.force) {
+    const cached = readApiCache(path, params, ttlMs);
+    if (cached) return cached;
+  }
 
   const response = await fetch(fmpUrl(path, params));
   if (!response.ok) {
@@ -490,7 +514,7 @@ function renderGrowthScreener() {
 
     title.textContent = item.stock.fmpSymbol || item.stock.ticker;
     name.textContent = item.stock.name;
-    meta.textContent = `成长 ${item.factors.growth} · 综合 ${item.factors.score} · 差距 ${item.gap} · 质量 ${item.factors.quality} · 财务 ${item.factors.financialHealth}`;
+    meta.textContent = `成长 ${factorScoreText(item.factors.growth)} · 综合 ${item.factors.score} · 差距 ${item.gap} · 质量 ${factorScoreText(item.factors.quality)} · 财务 ${factorScoreText(item.factors.financialHealth)}`;
     score.textContent = item.factors.score;
     scores.append(score, button);
     details.append(title, name, meta);
@@ -499,10 +523,20 @@ function renderGrowthScreener() {
   });
 }
 
-function averageScores(scores) {
+function averageScores(scores, minSamples = 1) {
   const clean = scores.filter((score) => score !== null && Number.isFinite(score));
-  if (!clean.length) return null;
+  if (clean.length < minSamples) return null;
   return clean.reduce((sum, score) => sum + score, 0) / clean.length;
+}
+
+function factorScoreText(score) {
+  return score === null || !Number.isFinite(score) ? "待补全" : score;
+}
+
+function fundamentalValue(stock, value, formatter) {
+  const parsed = numeric(value);
+  if (parsed === null) return stock.fundamentalStatus ? "未覆盖" : "-";
+  return formatter(parsed);
 }
 
 function weightedAverageScores(items) {
@@ -529,7 +563,6 @@ function getStockFactors(stock, portfolioValue = 0) {
   const netMargin = numeric(metrics.netMargin);
   const roe = numeric(metrics.roe);
   const roic = numeric(metrics.roic);
-  const incomeQuality = numeric(metrics.incomeQuality);
   const debtToEquity = numeric(metrics.debtToEquity);
   const currentRatio = numeric(metrics.currentRatio);
   const altmanZ = numeric(metrics.altmanZ);
@@ -561,14 +594,17 @@ function getStockFactors(stock, portfolioValue = 0) {
     scale(epsGrowth, -0.15, 0.4),
   ]);
 
-  const quality = averageScores([
+  const qualityRawValues = [grossMargin, operatingMargin, netMargin, roe, roic]
+    .filter((value) => value !== null);
+  const quality = qualityRawValues.length >= 3 && qualityRawValues.every((value) => value === 0)
+    ? null
+    : averageScores([
     scale(grossMargin, 0.25, 0.75),
     scale(operatingMargin, 0.08, 0.4),
     scale(netMargin, 0.05, 0.3),
     scale(roe, 0.08, 0.45),
     scale(roic, 0.06, 0.3),
-    scale(incomeQuality, 0.75, 1.35),
-  ]);
+    ], 3);
 
   const financialHealth = averageScores([
     scale(currentRatio, 0.8, 2.5),
@@ -665,13 +701,13 @@ function getStockFactors(stock, portfolioValue = 0) {
     score,
     riskScore: Math.round(clamp(riskScore)),
     confidence,
-    valuation: Math.round(valuation ?? 50),
-    growth: Math.round(growth ?? 50),
-    quality: Math.round(quality ?? 50),
-    financialHealth: Math.round(financialHealth ?? 50),
-    momentum: Math.round(momentum ?? 50),
-    analyst: Math.round(analyst ?? 50),
-    liquidity: Math.round(liquidity ?? 50),
+    valuation: valuation === null ? null : Math.round(valuation),
+    growth: growth === null ? null : Math.round(growth),
+    quality: quality === null ? null : Math.round(quality),
+    financialHealth: financialHealth === null ? null : Math.round(financialHealth),
+    momentum: momentum === null ? null : Math.round(momentum),
+    analyst: analyst === null ? null : Math.round(analyst),
+    liquidity: liquidity === null ? null : Math.round(liquidity),
     riskDrivers,
     weight,
   };
@@ -752,7 +788,7 @@ function renderAnalysis() {
     const riskLine = document.createElement("p");
     factorLine.className = "factor-line";
     riskLine.className = "risk-line";
-    factorLine.textContent = `估值 ${item.factors.valuation} · 成长 ${item.factors.growth} · 质量 ${item.factors.quality} · 财务 ${item.factors.financialHealth} · 动量 ${item.factors.momentum}`;
+    factorLine.textContent = `估值 ${factorScoreText(item.factors.valuation)} · 成长 ${factorScoreText(item.factors.growth)} · 质量 ${factorScoreText(item.factors.quality)} · 财务 ${factorScoreText(item.factors.financialHealth)} · 动量 ${factorScoreText(item.factors.momentum)}`;
     riskLine.textContent = item.factors.riskDrivers.length
       ? `风险来源：${item.factors.riskDrivers.slice(0, 3).join("、")}`
       : "风险来源：未发现突出单项风险";
@@ -788,10 +824,10 @@ function renderRows() {
     }</span>`;
     const metrics = stock.metrics || {};
     const valuationParts = [
-      `PE ${presentNumber(stock.pe)}`,
-      `收入 ${presentPercent(stock.growth)}`,
-      `ROE ${metrics.roe === null || metrics.roe === undefined ? "-" : percent(metrics.roe * 100, 1)}`,
-      `D/E ${presentNumber(metrics.debtToEquity)}`,
+      `PE ${fundamentalValue(stock, stock.pe, (value) => number(value))}`,
+      `收入 ${fundamentalValue(stock, stock.growth, (value) => percent(value))}`,
+      `ROE ${fundamentalValue(stock, metrics.roe, (value) => percent(value * 100, 1))}`,
+      `D/E ${fundamentalValue(stock, metrics.debtToEquity, (value) => number(value))}`,
       `完整度 ${factors.confidence}`,
     ];
     row.querySelector(".valuation-cell").textContent = valuationParts.join(" · ");
@@ -811,9 +847,227 @@ function renderRows() {
     riskPill.textContent = risk;
     riskPill.classList.add(risk === "低" ? "low" : risk === "中" ? "mid" : "high");
 
-    row.querySelector(".delete-row").addEventListener("click", () => deleteStock(stock.ticker));
+    row.classList.add("stock-row");
+    row.tabIndex = 0;
+    row.setAttribute("role", "button");
+    row.setAttribute("aria-label", `查看 ${stock.name} 的实时深度分析`);
+    row.addEventListener("click", (event) => {
+      if (event.target.closest("button")) return;
+      openStockDetail(stock.ticker);
+    });
+    row.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        openStockDetail(stock.ticker);
+      }
+    });
+    row.querySelector(".delete-row").addEventListener("click", (event) => {
+      event.stopPropagation();
+      deleteStock(stock.ticker);
+    });
     els.rows.append(row);
   });
+}
+
+function getStockCurrency(stock) {
+  if (/^\d{6}$/.test(stock.ticker || "")) return "CNY";
+  const currency = String(stock.currency || "USD").toUpperCase();
+  return /^[A-Z]{3}$/.test(currency) ? currency : "USD";
+}
+
+function stockMoney(stock, value, digits = 2) {
+  const amount = numeric(value);
+  if (amount === null) return "-";
+  const currency = getStockCurrency(stock);
+  return new Intl.NumberFormat(currency === "CNY" ? "zh-CN" : "en-US", {
+    style: "currency",
+    currency,
+    maximumFractionDigits: digits,
+  }).format(amount);
+}
+
+function compactStockMoney(stock, value) {
+  const amount = numeric(value);
+  if (amount === null || amount <= 0) return "-";
+  const currency = getStockCurrency(stock);
+  const symbol = new Intl.NumberFormat(currency === "CNY" ? "zh-CN" : "en-US", {
+    style: "currency",
+    currency,
+    currencyDisplay: "narrowSymbol",
+    maximumFractionDigits: 0,
+  })
+    .formatToParts(0)
+    .find((part) => part.type === "currency")?.value || `${currency} `;
+  const units = [
+    [1_000_000_000_000, "T"],
+    [1_000_000_000, "B"],
+    [1_000_000, "M"],
+  ];
+  const unit = units.find(([threshold]) => amount >= threshold);
+  return unit ? `${symbol}${(amount / unit[0]).toFixed(amount / unit[0] >= 100 ? 0 : 1)}${unit[1]}` : stockMoney(stock, amount, 0);
+}
+
+function addDetailListItem(list, message) {
+  const item = document.createElement("li");
+  item.textContent = message;
+  list.append(item);
+}
+
+function getDetailVerdict(factors) {
+  if (factors.score >= 72 && factors.riskScore < 45) return "偏积极";
+  if (factors.riskScore >= 70) return "风险优先";
+  if (factors.score >= 60) return "谨慎积极";
+  return "中性跟踪";
+}
+
+function getDetailAction(stock, factors) {
+  const upside = getUpside(stock);
+  if (factors.confidence < 50) return "关键财务字段覆盖不足。先刷新数据并核对最新财报，再基于评分作判断。";
+  if (factors.riskScore >= 70) return "先复核风险来源及下一份财报，当前不宜仅凭短期价格变化加大敞口。";
+  if (upside !== null && upside >= state.marginSafety && factors.score >= 65) {
+    return `目标价空间超过设定的 ${state.marginSafety}% 安全边际；仍应结合仓位上限和财报兑现情况分步跟踪。`;
+  }
+  if (factors.momentum !== null && factors.momentum < 40) return "基本面之外，价格趋势偏弱。关注能否重新站上 50 日与 200 日均线，而不是急于追价。";
+  return "持续跟踪收入、自由现金流与利润率的下一次披露，并把估值变化和实际业绩兑现放在一起判断。";
+}
+
+function renderStockDetail() {
+  const stock = state.stocks.find((item) => item.ticker === state.selectedTicker);
+  els.stockDetailPanel.hidden = !stock;
+  if (!stock) return;
+
+  const metrics = stock.metrics || {};
+  const factors = getStockFactors(stock);
+  const upside = getUpside(stock);
+  const price = numeric(stock.price);
+  const yearLow = numeric(metrics.yearLow);
+  const yearHigh = numeric(metrics.yearHigh);
+  const rangePosition = price !== null && yearLow !== null && yearHigh !== null && yearHigh > yearLow
+    ? ((price - yearLow) / (yearHigh - yearLow)) * 100
+    : null;
+  const change = numeric(stock.changePercent);
+
+  els.detailTitle.textContent = `${stock.name} (${stock.fmpSymbol || stock.ticker})`;
+  els.detailMeta.textContent = [stock.exchange, stock.sector, stock.industry].filter(Boolean).join(" · ") || "市场与行业信息待同步";
+  els.detailStatus.textContent = state.isDetailLoading ? "正在向 FMP 请求最新行情并更新分析..." : state.detailMessage;
+  els.refreshDetailBtn.disabled = state.isDetailLoading;
+  els.refreshDetailBtn.textContent = state.isDetailLoading ? "刷新中..." : "刷新分析";
+
+  els.detailPrice.textContent = stockMoney(stock, price);
+  els.detailChange.textContent = change === null ? "今日涨跌待同步" : `今日 ${percent(change)}${change >= 0 ? " 上涨" : " 下跌"}`;
+  els.detailChange.className = `detail-change ${change > 0 ? "positive" : change < 0 ? "negative" : ""}`;
+  els.detailUpside.textContent = upside === null ? "未覆盖" : percent(upside);
+  els.detailTarget.textContent = numeric(stock.target) === null || Number(stock.target) <= 0
+    ? "暂无分析师目标价"
+    : `一致目标价 ${stockMoney(stock, stock.target)}`;
+  els.detailRange.textContent = rangePosition === null ? "待同步" : `区间 ${percent(rangePosition, 0)}`;
+  els.detailRangeMeta.textContent = yearLow === null || yearHigh === null
+    ? "缺少 52 周高低价"
+    : `${stockMoney(stock, yearLow)} - ${stockMoney(stock, yearHigh)}`;
+  els.detailVerdict.textContent = getDetailVerdict(factors);
+  els.detailConfidence.textContent = `综合 ${factors.score} · 风险 ${factors.riskScore} · 数据完整度 ${factors.confidence}`;
+
+  els.detailFactors.innerHTML = "";
+  [
+    ["估值", factors.valuation],
+    ["成长", factors.growth],
+    ["盈利质量", factors.quality],
+    ["财务安全", factors.financialHealth],
+    ["价格动量", factors.momentum],
+    ["分析师预期", factors.analyst],
+  ].forEach(([label, score]) => {
+    const row = document.createElement("div");
+    const labelEl = document.createElement("span");
+    const scoreEl = document.createElement("strong");
+    const track = document.createElement("div");
+    const fill = document.createElement("i");
+    row.className = "factor-bar";
+    labelEl.textContent = label;
+    scoreEl.textContent = factorScoreText(score);
+    track.className = "factor-track";
+    fill.style.width = `${score ?? 0}%`;
+    track.append(fill);
+    row.append(labelEl, scoreEl, track);
+    els.detailFactors.append(row);
+  });
+
+  els.detailMetrics.innerHTML = "";
+  [
+    ["市值", compactStockMoney(stock, stock.marketCap || metrics.marketCap)],
+    ["市盈率", fundamentalValue(stock, stock.pe || metrics.pe, (value) => number(value))],
+    ["收入增速", fundamentalValue(stock, metrics.revenueGrowth, (value) => percent(value * 100))],
+    ["EPS 增速", fundamentalValue(stock, metrics.epsGrowth, (value) => percent(value * 100))],
+    ["自由现金流增速", fundamentalValue(stock, metrics.fcfGrowth, (value) => percent(value * 100))],
+    ["经营利润率", fundamentalValue(stock, metrics.operatingMargin, (value) => percent(value * 100))],
+    ["ROE", fundamentalValue(stock, metrics.roe, (value) => percent(value * 100))],
+    ["负债权益比", fundamentalValue(stock, metrics.debtToEquity, (value) => number(value))],
+    ["流动比率", fundamentalValue(stock, metrics.currentRatio, (value) => number(value))],
+    ["贝塔系数", presentNumber(metrics.beta)],
+    ["50 日均线", stockMoney(stock, metrics.priceAvg50)],
+    ["200 日均线", stockMoney(stock, metrics.priceAvg200)],
+  ].forEach(([label, value]) => {
+    const term = document.createElement("dt");
+    const definition = document.createElement("dd");
+    term.textContent = label;
+    definition.textContent = value;
+    els.detailMetrics.append(term, definition);
+  });
+
+  els.detailPositives.innerHTML = "";
+  const positives = [];
+  if (factors.growth >= 70) positives.push(`成长因子 ${factors.growth} 分，收入、利润或现金流增速表现较强。`);
+  if (factors.quality >= 70) positives.push(`盈利质量 ${factors.quality} 分，利润率和资本回报具备支撑。`);
+  if (factors.financialHealth >= 70) positives.push(`财务安全 ${factors.financialHealth} 分，流动性与杠杆状况相对稳健。`);
+  if (factors.momentum >= 65) positives.push(`价格动量 ${factors.momentum} 分，当前趋势得到均线或 52 周位置支持。`);
+  if (upside !== null && upside >= state.marginSafety) positives.push(`一致目标价隐含 ${percent(upside)} 空间，高于当前安全边际设置。`);
+  if (!positives.length) positives.push("暂未发现足够强的一致性积极信号，重点等待数据或趋势进一步确认。");
+  positives.slice(0, 4).forEach((message) => addDetailListItem(els.detailPositives, message));
+
+  els.detailRisks.innerHTML = "";
+  const risks = [...factors.riskDrivers];
+  if (price !== null && yearHigh !== null && yearHigh > 0 && (yearHigh - price) / yearHigh > 0.25) risks.push("当前价格距 52 周高点超过 25%，需要识别是估值回落还是基本面变化。");
+  if (numeric(metrics.debtToEquity) !== null && numeric(metrics.debtToEquity) > 2.5) risks.push("负债权益比偏高，需关注利率、再融资与现金流压力。");
+  if (!risks.length) risks.push("未出现突出的量化风险项；仍需关注下一次财报、行业景气和市场波动。");
+  [...new Set(risks)].slice(0, 4).forEach((message) => addDetailListItem(els.detailRisks, message));
+
+  els.detailAction.textContent = getDetailAction(stock, factors);
+}
+
+async function refreshStockDetail(ticker = state.selectedTicker) {
+  const index = state.stocks.findIndex((stock) => stock.ticker === ticker);
+  if (index < 0 || state.isDetailLoading) return;
+  if (!getApiKey()) {
+    state.detailMessage = "未设置 FMP API key，当前展示的是本地已保存的数据。";
+    renderView();
+    return;
+  }
+
+  state.isDetailLoading = true;
+  state.detailMessage = "正在更新实时行情与财务数据。";
+  renderView();
+
+  try {
+    let nextStock = await refreshOneStock(state.stocks[index], { forceQuote: true });
+    nextStock = await enrichStockFundamentals(nextStock);
+    state.stocks[index] = nextStock;
+    saveStocks();
+    state.detailMessage = nextStock.fundamentalStatus
+      ? `实时行情已更新：${new Date().toLocaleString("zh-CN")}。${nextStock.fundamentalStatus}`
+      : `实时行情已更新：${new Date().toLocaleString("zh-CN")}。财务数据按 FMP 最新可用披露同步。`;
+  } catch (error) {
+    state.detailMessage = `刷新失败：${error.message}。已保留上次成功的数据。`;
+  } finally {
+    state.isDetailLoading = false;
+    renderView();
+  }
+}
+
+function openStockDetail(ticker) {
+  state.selectedTicker = ticker;
+  state.detailMessage = "正在准备该股票的深度分析。";
+  renderView();
+  els.stockDetailPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+  refreshStockDetail(ticker);
 }
 
 function renderView() {
@@ -833,6 +1087,7 @@ function renderView() {
   renderMetrics();
   renderAnalysis();
   renderRows();
+  renderStockDetail();
   renderSearchResults();
   renderGrowthScreener();
   renderApiKeyState();
@@ -841,6 +1096,10 @@ function renderView() {
 
 function deleteStock(ticker) {
   state.stocks = state.stocks.filter((stock) => stock.ticker !== ticker);
+  if (state.selectedTicker === ticker) {
+    state.selectedTicker = null;
+    state.detailMessage = "选择股票后会显示实时分析。";
+  }
   saveStocks();
   renderView();
 }
@@ -927,9 +1186,9 @@ function applyProfile(stock, profile) {
   };
 }
 
-async function fetchQuoteWithProfileFallback(symbol) {
+async function fetchQuoteWithProfileFallback(symbol, options = {}) {
   try {
-    const quotes = await fetchJson("quote", { symbol }, { ttlMs: 2 * 60 * 1000 });
+    const quotes = await fetchJson("quote", { symbol }, { ttlMs: 2 * 60 * 1000, force: options.forceQuote });
     const quote = Array.isArray(quotes) ? quotes[0] : quotes;
     if (quote) return { data: quote, source: "quote" };
   } catch (error) {
@@ -937,7 +1196,7 @@ async function fetchQuoteWithProfileFallback(symbol) {
     // Some symbols are blocked on quote for this plan but still expose price in profile.
   }
 
-  const profiles = await fetchJson("profile", { symbol }, { ttlMs: 24 * 60 * 60 * 1000 });
+  const profiles = await fetchJson("profile", { symbol }, { ttlMs: 24 * 60 * 60 * 1000, force: options.forceQuote });
   const profile = Array.isArray(profiles) ? profiles[0] : profiles;
   if (!profile) throw new Error("FMP 未返回价格数据");
   return { data: profile, source: "profile" };
@@ -949,11 +1208,11 @@ function applyRatios(stock, ratios) {
   const metrics = {
     ...(stock.metrics || {}),
     pe: pickNumber(ratios, ["priceToEarningsRatioTTM", "peRatioTTM"]),
-    roe: pickNumber(ratios, ["returnOnEquityTTM", "returnOnTangibleAssetsTTM"]),
-    roic: pickNumber(ratios, ["returnOnInvestedCapitalTTM"]),
-    grossMargin: pickNumber(ratios, ["grossProfitMarginTTM", "grossMarginTTM"]),
-    operatingMargin: pickNumber(ratios, ["operatingProfitMarginTTM", "operatingMarginTTM"]),
-    netMargin: pickNumber(ratios, ["netProfitMarginTTM", "bottomLineProfitMarginTTM"]),
+    roe: pickNumber(ratios, ["returnOnEquityTTM", "returnOnEquity", "returnOnTangibleAssetsTTM"]),
+    roic: pickNumber(ratios, ["returnOnInvestedCapitalTTM", "returnOnInvestedCapital", "returnOnCapitalEmployedTTM"]),
+    grossMargin: pickNumber(ratios, ["grossProfitMarginTTM", "grossMarginTTM", "grossProfitMargin"]),
+    operatingMargin: pickNumber(ratios, ["operatingProfitMarginTTM", "operatingMarginTTM", "operatingProfitMargin"]),
+    netMargin: pickNumber(ratios, ["netProfitMarginTTM", "bottomLineProfitMarginTTM", "netProfitMargin"]),
     debtToEquity: pickNumber(ratios, ["debtToEquityRatioTTM"]),
     currentRatio: pickNumber(ratios, ["currentRatioTTM"]),
     enterpriseValueMultiple: pickNumber(ratios, ["enterpriseValueMultipleTTM"]),
@@ -1059,12 +1318,59 @@ function applyAnalystEstimates(stock, estimates) {
   };
 }
 
-async function refreshQuotes() {
+function isPlanRestricted(result) {
+  return result.status === "rejected" && String(result.reason?.message || result.reason || "").includes("套餐无权访问");
+}
+
+function clearRestrictedFundamentals(stock) {
+  const metrics = { ...(stock.metrics || {}) };
+  [
+    "pe",
+    "roe",
+    "roic",
+    "grossMargin",
+    "operatingMargin",
+    "netMargin",
+    "incomeQuality",
+    "debtToEquity",
+    "currentRatio",
+    "enterpriseValueMultiple",
+    "evToSales",
+    "evToFcf",
+    "fcfYield",
+    "earningsYield",
+    "altmanZ",
+    "piotroski",
+    "revenueGrowth",
+    "netIncomeGrowth",
+    "epsGrowth",
+    "fcfGrowth",
+    "operatingCashFlowGrowth",
+    "analystRevenueUpside",
+    "analystEpsGrowth",
+    "analystCountEps",
+    "analystCountRevenue",
+    "targetHigh",
+    "targetLow",
+    "targetMedian",
+  ].forEach((key) => delete metrics[key]);
+
+  return {
+    ...stock,
+    pe: null,
+    growth: null,
+    target: null,
+    metrics,
+    fundamentalStatus: "FMP 当前套餐未覆盖 TTM 估值、财务质量与分析师预期数据。",
+  };
+}
+
+async function refreshQuotes(options = {}) {
   const results = await Promise.all(
     state.stocks.map(async (stock) => {
       const symbol = normalizeSymbol(stock.ticker);
       try {
-        const result = await fetchQuoteWithProfileFallback(symbol);
+        const result = await fetchQuoteWithProfileFallback(symbol, options);
         return result.source === "profile" ? applyProfile(stock, result.data) : applyQuote(stock, result.data);
       } catch (error) {
         return {
@@ -1080,9 +1386,9 @@ async function refreshQuotes() {
   return failures;
 }
 
-async function refreshOneStock(stock) {
+async function refreshOneStock(stock, options = {}) {
   const symbol = normalizeSymbol(stock.ticker);
-  const result = await fetchQuoteWithProfileFallback(symbol);
+  const result = await fetchQuoteWithProfileFallback(symbol, options);
   return result.source === "profile" ? applyProfile(stock, result.data) : applyQuote(stock, result.data);
 }
 
@@ -1111,7 +1417,12 @@ async function enrichStockFundamentals(stock) {
   if (cashFlowGrowth.status === "fulfilled") nextStock = applyGrowth(nextStock, cashFlowGrowth.value?.[0], "cashflow");
   if (targets.status === "fulfilled") nextStock = applyPriceTarget(nextStock, targets.value?.[0] || targets.value);
   if (estimates.status === "fulfilled") nextStock = applyAnalystEstimates(nextStock, estimates.value?.[0]);
-  return nextStock;
+  const restrictedCount = [ratios, keyMetrics, scores, incomeGrowth, balanceGrowth, cashFlowGrowth, targets, estimates]
+    .filter(isPlanRestricted)
+    .length;
+
+  if (restrictedCount >= 5) return clearRestrictedFundamentals(nextStock);
+  return { ...nextStock, fundamentalStatus: "" };
 }
 
 async function refreshFundamentals() {
@@ -1120,6 +1431,7 @@ async function refreshFundamentals() {
   });
 
   state.stocks = await Promise.all(jobs);
+  return state.stocks.filter((stock) => stock.fundamentalStatus).length;
 }
 
 async function refreshFmpData() {
@@ -1135,7 +1447,7 @@ async function refreshFmpData() {
   renderView();
 
   try {
-    const quoteFailures = await refreshQuotes();
+    const quoteFailures = await refreshQuotes({ forceQuote: true });
     if (quoteFailures === state.stocks.length && state.stocks.length > 0) {
       state.statusMessage = "FMP 请求额度已用完，已暂停财务数据同步。请稍后再刷新。";
       saveStocks();
@@ -1148,12 +1460,13 @@ async function refreshFmpData() {
     renderStatus(state.statusMessage);
     renderRows();
     renderMetrics();
-    await refreshFundamentals();
+    const restrictedFundamentals = await refreshFundamentals();
     state.settings.lastUpdated = new Date().toISOString();
     saveStocks();
     saveSettings();
-    state.statusMessage =
-      quoteFailures > 0
+    state.statusMessage = restrictedFundamentals
+      ? `行情已更新；${restrictedFundamentals} 只股票的财务与估值字段受当前 FMP 套餐限制。`
+      : quoteFailures > 0
         ? `FMP 刷新完成，${quoteFailures} 只股票保留本地数据。`
         : "FMP 真实数据刷新完成。";
   } catch (error) {
@@ -1283,6 +1596,12 @@ els.clearApiKeyBtn.addEventListener("click", () => {
 });
 
 els.runGrowthScreenerBtn.addEventListener("click", runGrowthScreener);
+els.refreshDetailBtn.addEventListener("click", () => refreshStockDetail());
+els.closeDetailBtn.addEventListener("click", () => {
+  state.selectedTicker = null;
+  state.detailMessage = "选择股票后会显示实时分析。";
+  renderView();
+});
 
 els.openSearchBtn.addEventListener("click", () => {
   els.searchPanel.hidden = false;

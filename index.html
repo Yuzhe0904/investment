@@ -191,6 +191,74 @@
             </div>
             <p id="emptyState" class="empty-state" hidden>还没有匹配的股票。</p>
           </section>
+
+          <section id="stockDetailPanel" class="tool-panel stock-detail-panel full-width" aria-label="单只股票深度分析" hidden>
+            <div class="section-head detail-head">
+              <div>
+                <span class="panel-label">实时深度分析</span>
+                <h3 id="detailTitle">-</h3>
+                <p id="detailMeta" class="detail-meta"></p>
+              </div>
+              <div class="detail-actions">
+                <button id="refreshDetailBtn" class="ghost-button" type="button">刷新分析</button>
+                <button id="closeDetailBtn" class="icon-button" type="button" title="关闭分析">×</button>
+              </div>
+            </div>
+
+            <p id="detailStatus" class="detail-status" aria-live="polite">选择股票后会显示实时分析。</p>
+
+            <div class="detail-market-grid">
+              <article class="detail-market-card">
+                <span>最新价格</span>
+                <strong id="detailPrice">-</strong>
+                <small id="detailChange">-</small>
+              </article>
+              <article class="detail-market-card">
+                <span>分析师目标空间</span>
+                <strong id="detailUpside">-</strong>
+                <small id="detailTarget">-</small>
+              </article>
+              <article class="detail-market-card">
+                <span>52 周位置</span>
+                <strong id="detailRange">-</strong>
+                <small id="detailRangeMeta">-</small>
+              </article>
+              <article class="detail-market-card">
+                <span>综合判断</span>
+                <strong id="detailVerdict">-</strong>
+                <small id="detailConfidence">-</small>
+              </article>
+            </div>
+
+            <div class="detail-columns">
+              <section class="detail-section">
+                <span class="panel-label">因子评分</span>
+                <div id="detailFactors" class="detail-factors"></div>
+              </section>
+
+              <section class="detail-section">
+                <span class="panel-label">关键数据</span>
+                <dl id="detailMetrics" class="detail-metrics"></dl>
+              </section>
+            </div>
+
+            <div class="detail-insights">
+              <section class="insight-block positive-insight">
+                <span class="panel-label">积极因素</span>
+                <ul id="detailPositives"></ul>
+              </section>
+              <section class="insight-block risk-insight">
+                <span class="panel-label">主要风险</span>
+                <ul id="detailRisks"></ul>
+              </section>
+              <section class="insight-block action-insight">
+                <span class="panel-label">当前关注点</span>
+                <p id="detailAction">-</p>
+              </section>
+            </div>
+
+            <p class="detail-disclaimer">分析基于 FMP 行情、财务与分析师数据，仅作研究辅助，不构成投资建议。</p>
+          </section>
         </section>
       </section>
     </main>
